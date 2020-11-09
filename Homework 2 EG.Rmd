@@ -1,0 +1,182 @@
+---
+title: "HW2 Telemarketing"
+author: "Elise Gordon - Worked with Michael Kalmus during class"
+date: "11/8/2020"
+output:
+  html_document:
+    toc: true
+    theme: readable
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Downloading and Prepping the Data
+
+```{r}
+#Downloading and Prepping the Data
+tele <- read.csv("tele.csv", stringsAsFactors = TRUE)
+summary(tele)
+```
+
+```{r}
+#We are deleting the "duration" variable because it is an after the fact measurement. We only should be using variables that we know before the call
+tele$duration <- NULL
+
+# Deleting the column X
+tele$X <- NULL
+
+# Changing pdays to a dummy and deleting pdays
+tele$pdaysdummy <- ifelse(tele$pdays == 999, 0, 1)
+tele$pdays <- NULL
+
+str(tele)
+```
+
+## Getting Data Ready for Analysis
+
+```{r}
+#Optional simplifying of data
+tele$job <- NULL
+tele$month <- NULL
+tele$day_of_week <- NULL
+```
+
+```{r}
+# Using model.matrix to convert all the factors to dummy variables
+# We are converting all of the factors into dummy variables as the input into ANN has to be numeric
+telemm <- as.data.frame(model.matrix(~.-1,tele)) 
+str(telemm)
+
+# Randomize the rows in the data (shuffling the rows)
+set.seed(12345)
+tele_random <- telemm[sample(nrow(telemm)),]
+
+#Normalize the data
+normalize <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x)))
+}
+
+# we are going to normalize everything 
+tele_norm <- as.data.frame(lapply(tele_random, normalize))
+```
+```{r}
+summary(tele_norm)
+```
+
+## Getting Train and Test Samples
+
+```{r}
+# Selects 10000 random rows for test data
+set.seed(12345)
+test_set <- sample(1:nrow(tele_norm), 10000) 
+# Depending on R-version and computer, different rows may be selected. 
+# If that happens, results are different. 
+
+# Create a train set and test set
+#First the predictors - all columns except the yyes column
+tele_train <- tele_norm[-test_set, ]
+tele_test <- tele_norm[test_set, ]
+```
+
+> Now you are ready to build your ANN model. Feel free to modify the data load, cleaning and preparation code above as per your preference.
+
+## Logistic Regression Model
+
+We will build a simple logistic regression model and use that to show how to do prediction and model evaluation.
+
+### Simple Model Building
+
+```{r}
+#note: we build the model using the training set
+simplemodel <- glm(yyes ~ ., data = tele_train, family = binomial(link = "logit"))
+```
+
+```{r}
+stepmodel <- step(simplemodel, direction = "backward")
+```
+
+### Prediction based on Step Model
+
+```{r}
+pred_step <- predict(stepmodel, tele_test, type = "response")
+summary(pred_step)
+#pred_cat <- ifelse(pred_step >= 0.5, 1, 0)
+pred_cat <- ifelse(pred_step >= 0.3, 1, 0)
+table(pred_cat)
+300 / 9700
+table(tele_train$yyes)
+3491 / 27697
+```
+
+Comparing these results, we can say that 0.5 is not a good threshold and must be lowered. 
+
+### Evaluation of Model
+
+Now we create a confusion matrix. This shows us if our binary predictions were good or not. 
+
+```{r}
+library(caret)
+confusionMatrix(factor(pred_cat), factor(tele_test$yyes), positive = "1")
+```
+Accuracy represents how many we are getting right (true positives and true negatives). Note that our accuracy of ~89% is not really good.
+
+True positive (TP): 462
+
+True negative (TN): 8422
+
+False positive (FP): 429
+
+False negative (FN):  687
+
+
+## Build ANN model to predict yyes, predict test data and build confusion matrix 
+```{r}
+# Load relevant libraries
+library(neuralnet)
+
+# simple ANN with only a single hidden neuron
+tele_model <- neuralnet(formula = yyes ~ .,
+                              data = tele_train)
+
+summary(tele_model)
+```
+
+```{r}
+#Plot the NN
+plot(tele_model)
+```
+
+```{r}
+# obtain model results
+model_results <- compute(tele_model, tele_test[,-29])
+
+# obtain predicted strength values
+predicted_yyes <- model_results$net.result
+
+summary(predicted_yyes)
+```
+
+```{r}
+#Set threshold 
+pred_cat_nn <- ifelse(predicted_yyes >= 0.5, 1, 0)
+#Create confusion matrix
+confusionMatrix(factor(pred_cat_nn), factor(tele_test$yyes), positive = "1")
+```
+True Positive: 229
+
+True Negative: 8772
+
+False Positive: 128
+
+False Negative: 871
+
+```{r}
+#validate accuracy
+(8772 + 229) / (8772 + 229 + 128 + 871)
+```
+
+I would rather use the ANN model for this prediction for several reasons. Not only was it more accurate than the linear regression model, but ANN is usually a better model when there are a lot of variables. In this case, there are a lot of different potential factors influencing the call success, so the linear regression model might confound certain variables that aren't actually influential. 
